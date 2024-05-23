@@ -9,6 +9,7 @@ import re
 import pytesseract
 from langdetect import detect, detect_langs
 from PIL import Image
+import numpy as np
 # Đặt đường dẫn tới Tesseract executable (nếu cần thiết, chỉ áp dụng cho Windows)
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
@@ -20,6 +21,37 @@ def detect_language(text):
         return None
     except:
         return None
+
+
+def cropImage(img,contours):
+    pickers = []
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
+        area = w *h
+        #Chỉ lấy khung lớn
+        if(area>20000): 
+           pickers.append([x,y,w,h])
+    
+    pickers = np.array(pickers) #chuyển về numpy để xử lý
+    #khởi tạo các giá trị (mặc định là khung đầu)
+    x = pickers[0][0]
+    y = pickers[0][1]
+    w= pickers[0][2]
+    h = pickers[0][3]
+
+    #Tìm x,y,w,h cho case nhiều khung trong hình
+    if (pickers.shape[0]>1):
+        for i in range(pickers.shape[0]):
+            if (x > pickers[i][0]):
+                x = pickers[i][0]
+            if (y> pickers[i][1]):
+                y = pickers[i][1]
+            w += pickers[i][2]
+            h += pickers[i][3]
+    # Cắt hình ảnh theo khung hình chữ nhật
+    cropped_img = img[y:y+h, x:x+w]
+    pickers_list = tuple(map(tuple, pickers))
+    return cropped_img, pickers_list
 
 def extract_text_from_image(image_path, target_chars='ABCD'):
     # Đọc hình ảnh
@@ -35,14 +67,15 @@ def extract_text_from_image(image_path, target_chars='ABCD'):
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     # Giả sử khung hình chữ nhật chứa nội dung chính là đường viền lớn nhất
-    largest_contour = max(contours, key=cv2.contourArea)
-    
+    # largest_contour = max(contours, key=cv2.contourArea)
     # Tìm khung hình chữ nhật bao quanh đường viền lớn nhất
-    x, y, w, h = cv2.boundingRect(largest_contour)
-    
+    # x, y, w, h = cv2.boundingRect(largest_contour)
     # Cắt hình ảnh theo khung hình chữ nhật
-    cropped_img = img[y:y+h, x:x+w]
+    # cropped_img = img[y:y+h, x:x+w]
     
+    # Cắt ảnh và lấy các contours trong ảnh đã cắt
+    cropped_img, picked_contours = cropImage(img,contours)
+
     # Lưu hình ảnh đã cắt (nếu cần)
     cv2.imwrite('cropped_image.png', cropped_img)
     
@@ -68,10 +101,8 @@ def extract_text_from_image(image_path, target_chars='ABCD'):
     
     detected_text = []
     
-    for contour in contours:
-        # Tìm khung hình chữ nhật bao quanh đường viền
-        x, y, w, h = cv2.boundingRect(contour)
-        
+    for contour in picked_contours:
+        x, y, w, h = contour
         # Cắt hình ảnh theo khung hình chữ nhật
         cropped_contour_img = img[y:y+h, x:x+w]
         
@@ -84,7 +115,6 @@ def extract_text_from_image(image_path, target_chars='ABCD'):
             
             # Vẽ khung hình chữ nhật xung quanh các ký tự được phát hiện
             cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
-    
     # Hiển thị hình ảnh với các khung chữ nhật đã được vẽ (tùy chọn)
     # cv2.imshow('Detected Characters', img)
     # cv2.waitKey(0)
@@ -92,41 +122,46 @@ def extract_text_from_image(image_path, target_chars='ABCD'):
     
     return detected_text, ocr_langs_str
 
+#Xử lý đoạn detected_text 
+def formatText(detected_text):
+    string = ''.join(detected_text) #Chuyển sang string
+    ban_list = ['(Choose 1 answer)\n',"|",] #List ký tự cần xóa
+    answer_list = ['\nA','\nB','\nC','\nD'] #List đáp án
+
+    for char in ban_list:
+        if char in string:
+            if char in string:
+                string = string.replace(char, '') #xóa ký tự
+    
+    for char in answer_list:
+        if char in string:
+            if ('.' not in string[string.index(char)+2]):
+                string = string.replace(string[string.index(char)+2],'.') #format đáp án
+
+    if '\n\n' in string:
+        string = string.replace('\n\n','\n') #Tránh cách 2 dòng
+
+    return string.strip()
+
+# Hàm xuất file txt
+def writeTxt(text):
+    with open("./text.txt", "w",encoding="utf-8" ) as f: f.write(text)
+
+############## Main ################  
 # Đường dẫn tới hình ảnh cần xử lý
-image_path = 'nhung_dang_hinh/10.jpg'
+image_path = 'nhung_dang_hinh/2.jpg'
 
 # Nhận diện văn bản từ hình ảnh
 detected_text, detected_languages = extract_text_from_image(image_path)
+formatted_text = formatText(detected_text)
+
+#Ghi kết quả vào file txt
+writeTxt(formatted_text)
+
+#In ra màn hình
 print("Detected text:", detected_text)
-print("Detected languages:", detected_languages)
-
-#Xử lý đoạn detected_text 
-def remove_extra_characters(text_list):
-    cleaned_text_list = []
-    for text in text_list:
-        # Loại bỏ cụm từ
-        text = re.sub(r'^FUOVERFLOW\.COM \|', '', text)
-        text = re.sub(r'\(Choose 1 answer\)', '', text)
-        text = re.sub(r'(Choose 1\nanswer)', '', text)
-        text = re.sub(r'An', '', text)
-        text = re.sub(r'Ai', '', text)
-        
-        # Loại bỏ các ký tự thừa
-        #text = re.sub(r"[^\w\s()\-+?.:[]]", "", text)
-        
-        # Loại bỏ ký tự thừa
-        text = re.sub(r"^\|", "", text)
-        
-        # Thay thế nhiều khoảng trắng bằng một khoảng trắng
-        #text = re.sub(r"\s+", " ", text)  
-        # Thêm vào danh sách đã làm sạch
-        cleaned_text_list.append(text.strip())
-    return cleaned_text_list
-
-cleaned_text = remove_extra_characters(detected_text)
-#biến danh sách các câu trả lời thành một chuỗi duy nhất mà mỗi câu trả lời được đặt trên một dòng riêng.
-formatted_text = "\n".join(cleaned_text)
-print("Cleaned text:",formatted_text)
+print("\nDetected languages:", detected_languages)
+print("\nCleaned text:",formatted_text)
 
 
 
